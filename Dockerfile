@@ -1,10 +1,14 @@
 FROM tensorflow/tensorflow:latest
 MAINTAINER Alexander Wellbrock <a.wellbrock@mailbox.org>
+MAINTAINER Josh Ward <ward.joshua92@yahoo.com>
 
 ### X11 server: inspired by suchja/x11server and suchja/wine ###
 
 # first create user and group for all the X Window stuff
 # required to do this first so we have consistent uid/gid between server and client container
+
+#NOTE: if you ever make a dockerfile DONT DO THIS. Break up the commands 
+#      for layered build dependency optimization and better error reporting.
 RUN addgroup --system starcraft \
   && adduser \
     --home /home/starcraft \
@@ -29,12 +33,14 @@ RUN apt-get update -y \
     winbind
 
 # Install packages required for connecting against X Server
-RUN apt-get update && apt-get install -y --no-install-recommends \
-  xvfb \
-  xauth \
-  x11vnc \
-  x11-utils \
-  x11-xserver-utils
+RUN apt-get update 
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata
+RUN apt-get install --no-install-recommends -y
+RUN apt-get install --no-install-recommends xvfb -y
+RUN apt-get install --no-install-recommends xauth -y
+RUN apt-get install --no-install-recommends x11vnc -y
+RUN apt-get install --no-install-recommends x11-utils -y
+RUN apt-get install --no-install-recommends x11-xserver-utils -y
 
 ENV DISPLAY :0.0
 
@@ -42,16 +48,29 @@ ENV DISPLAY :0.0
 ENV WINE_MONO_VERSION 4.6.4
 ENV WINE_GECKO_VERSION 2.47
 
-RUN curl -SL https://dl.winehq.org/wine-builds/Release.key -o Release.key \
-  && apt-key add Release.key \
-  && apt-add-repository 'https://dl.winehq.org/wine-builds/ubuntu/'
+# Get Wine keys
+RUN curl -SL https://dl.winehq.org/wine-builds/winehq.key | apt-key add - 
+RUN apt-add-repository 'https://dl.winehq.org/wine-builds/ubuntu/ main'
+
+# add x32 architecture toolchain 
+RUN dpkg --add-architecture i386 
+RUN apt-get update 
+RUN apt-get upgrade -y
+
+# install graphics dependencies
+#RUN sudo apt-get install libgnutls30:i386 libldap-2.4-2:i386 libgpg-error0:i386 libxml2:i386 libasound2-plugins:i386 libsdl2-2.0-0:i386 libfreetype6:i386 libdbus-1-3:i386 libsqlite3-0:i386 -y
 
 # Install wine and related packages
-RUN dpkg --add-architecture i386 \
-  && apt-get update -y \
-  && apt-get install -y --no-install-recommends \
-    winehq-stable \
-  && rm -rf /var/lib/apt/lists/*
+# TODO: fix this wget-curl descrepency
+RUN apt-get install wget 
+RUN wget https://download.opensuse.org/repositories/Emulators:/Wine:/Debian/xUbuntu_18.04/Release.key
+RUN apt-key add Release.key
+RUN apt-add-repository 'deb https://download.opensuse.org/repositories/Emulators:/Wine:/Debian/xUbuntu_18.04/ ./'
+RUN apt update
+RUN apt install libfaudio0 libasound2-plugins:i386 -y
+
+RUN apt-get install -y --no-install-recommends winehq-stable
+RUN rm -rf /var/lib/apt/lists/*
 
 # Use the latest version of winetricks
 RUN curl -SL 'https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks' -o /usr/local/bin/winetricks \
@@ -68,10 +87,11 @@ RUN mkdir /opt/wine-stable/share/wine/mono \
 RUN mkdir /opt/wine-stable/share/wine/gecko \
     && curl -L https://dl.winehq.org/wine/wine-gecko/2.47/wine_gecko-2.47-x86.msi -o /opt/wine-stable/share/wine/gecko/wine_gecko-2.47-x86.msi
 
-# Starting an x server before running wine init prevents some errors
-RUN Xvfb :0 -auth ~/.Xauthority -screen 0 1024x768x24 >> /var/log/xvfb.log 2>&1 & \
-    su -c "wine wineboot --init" starcraft \
-    && su -c "winetricks -q vcrun2013" starcraft
+# TODO: Fix 
+# # Starting an x server before running wine init prevents some errors
+RUN Xvfb :0 -auth ~/.Xauthority -screen 0 1024x768x24 >> /var/log/xvfb.log 2>&1 &
+RUN su -c "wine wineboot --init" starcraft 
+RUN su -c "winetricks -q vcrun2013" starcraft
 
 ENV BOT_DIR /home/starcraft/.wine/drive_c/bot
 ENV BOT_PATH=$BOT_DIR/bot.dll BOT_DEBUG_PATH=$BOT_DIR/bot_d.dll
@@ -104,5 +124,10 @@ RUN chown -R starcraft:starcraft /home/starcraft/
 
 ADD entrypoint.sh /bin/entrypoint
 RUN chmod +x /bin/entrypoint
+
+#force update and upgrade 
+#bloated but necessary for drivers?
+#RUN apt upgrade 
+
 
 ENTRYPOINT ["entrypoint"]
